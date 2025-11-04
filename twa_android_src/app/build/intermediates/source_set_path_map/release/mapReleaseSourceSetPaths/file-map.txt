@@ -1,0 +1,11 @@
+com.helloworld.groupchat.twa.app-core-1.1.0-0 /Users/xintongjiang/.gradle/caches/8.13/transforms/2be6921bbd26dcfad7b49e3ad4633350/transformed/core-1.1.0/res
+com.helloworld.groupchat.twa.app-jetified-androidbrowserhelper-2.5.0-1 /Users/xintongjiang/.gradle/caches/8.13/transforms/773fdde205a4e53813b988cfdb1f2bc0/transformed/jetified-androidbrowserhelper-2.5.0/res
+com.helloworld.groupchat.twa.app-browser-1.4.0-2 /Users/xintongjiang/.gradle/caches/8.13/transforms/7d9a8e691112d02f8b6c3f1c400c4d9a/transformed/browser-1.4.0/res
+com.helloworld.groupchat.twa.app-pngs-3 /Users/xintongjiang/Desktop/Custom-Chatbot-main/twa_android_src/app/build/generated/res/pngs/release
+com.helloworld.groupchat.twa.app-resValues-4 /Users/xintongjiang/Desktop/Custom-Chatbot-main/twa_android_src/app/build/generated/res/resValues/release
+com.helloworld.groupchat.twa.app-updated_navigation_xml-5 /Users/xintongjiang/Desktop/Custom-Chatbot-main/twa_android_src/app/build/generated/updated_navigation_xml/release
+com.helloworld.groupchat.twa.app-packageReleaseResources-6 /Users/xintongjiang/Desktop/Custom-Chatbot-main/twa_android_src/app/build/intermediates/incremental/release/packageReleaseResources/merged.dir
+com.helloworld.groupchat.twa.app-packageReleaseResources-7 /Users/xintongjiang/Desktop/Custom-Chatbot-main/twa_android_src/app/build/intermediates/incremental/release/packageReleaseResources/stripped.dir
+com.helloworld.groupchat.twa.app-release-8 /Users/xintongjiang/Desktop/Custom-Chatbot-main/twa_android_src/app/build/intermediates/merged_res/release/mergeReleaseResources
+com.helloworld.groupchat.twa.app-main-9 /Users/xintongjiang/Desktop/Custom-Chatbot-main/twa_android_src/app/src/main/res
+com.helloworld.groupchat.twa.app-release-10 /Users/xintongjiang/Desktop/Custom-Chatbot-main/twa_android_src/app/src/release/res
