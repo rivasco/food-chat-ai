@@ -10,30 +10,51 @@ chatbot.db
 # Gradle
 .gradle/
 build/
+**/build/
+**/build-*/
+**/intermediates/
+**/generated/
+**/outputs/
+**/tmp/
+**/incremental/
+**/merge/
+.cxx/
+.externalNativeBuild/
 
 # Local configuration
 local.properties
 *.iml
-
-# Android Studio
 .idea/
 *.iws
 *.log
 captures/
 output.json
+*.keystore
 
-# APK / generated binaries
+# OS files
+.DS_Store
+Thumbs.db
+
+# Android / Java / Kotlin compiled files
+*.class
+*.dex
 *.apk
 *.ap_
 *.aab
 
 # NDK / external build outputs
 obj/
-.externalNativeBuild/
+*.so
 
-# Kotlin / Java compiled files
-*.class
-*.dex
+# Testing
+*.hprof
+*.orig
+*.rej
+*.patch
 
-# Other
-*.keystore
+# Misc
+*.bin
+*.lock
+*.tmp
+*.bak
+
