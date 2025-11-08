@@ -2,14 +2,14 @@ import os
 import tempfile
 import traceback
 from typing import Optional, List
-from fastapi import FastAPI, File, UploadFile, HTTPException, Header, Depends
+from fastapi import FastAPI, File, UploadFile, HTTPException, Header, Depends, WebSocket, WebSocketDisconnect, Query
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, constr
 from backend.data_storage import (
     get_pdf_text, get_text_chunks, get_or_load_vectorstore, clean_text,
     format_history_from_db, generate_rag_response, generate_general_response
 )
-from backend.database import add_pdf, get_all_pdfs, delete_pdf, create_chat, get_all_chats, get_chat_messages, add_message, update_chat_title, delete_chat
+from backend.database import add_pdf, get_all_pdfs, delete_pdf, create_chat, get_all_chats, get_chat_messages, add_message, update_chat_title, delete_chat, get_message_with_sender
 from . import database
 from .auth import hash_password, verify_password, create_access_token, get_email_from_token
 
@@ -29,6 +29,27 @@ app.add_middleware(
 # Global vectorstore (shared across all chats)
 vectorstore = None
 
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: dict[int, list[WebSocket]] = {}
+
+    async def connect(self, websocket: WebSocket, chat_id: int):
+        await websocket.accept()
+        if chat_id not in self.active_connections:
+            self.active_connections[chat_id] = []
+        self.active_connections[chat_id].append(websocket)
+
+    def disconnect(self, websocket: WebSocket, chat_id: int):
+        if chat_id in self.active_connections:
+            self.active_connections[chat_id].remove(websocket)
+
+    async def broadcast(self, message: str, chat_id: int):
+        if chat_id in self.active_connections:
+            for connection in self.active_connections[chat_id]:
+                await connection.send_text(message)
+
+manager = ConnectionManager()
+
 class ChatMessage(BaseModel):
     message: str
     chat_id: Optional[int] = None
@@ -43,13 +64,19 @@ class CreateChatRequest(BaseModel):
 class ChatListResponse(BaseModel):
     chats: list
 
-class AuthRequest(BaseModel):
+class RegisterRequest(BaseModel):
+    email: EmailStr
+    username: constr(min_length=3, max_length=20)
+    password: str
+
+class LoginRequest(BaseModel):
     email: EmailStr
     password: str
 
 class AuthResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
+    username: str
 
 @app.on_event("startup")
 def startup():
@@ -84,21 +111,33 @@ def get_current_user(authorization: str = Header(...)):
         raise HTTPException(status_code=401, detail="User not found")
     return user  # dict with id, email, ...
 
+async def get_current_user_ws(token: str = Query(...)):
+    if not token:
+        return None
+    email = get_email_from_token(token)
+    if not email:
+        return None
+    user = database.get_user_by_email(email)
+    return user
+
 class InviteRequest(BaseModel):
     emails: List[EmailStr]
 
 # --- Auth unchanged ---
 
 @app.post("/auth/register", response_model=AuthResponse)
-def register(body: AuthRequest):
+def register(body: RegisterRequest):
     if database.get_user_by_email(body.email):
         raise HTTPException(status_code=400, detail="Email already registered")
-    database.create_user(body.email, hash_password(body.password))
+    try:
+        database.create_user(body.email, body.username, hash_password(body.password))
+    except database.sqlite3.IntegrityError:
+        raise HTTPException(status_code=400, detail="Username already taken")
     token = create_access_token(sub=body.email)
-    return AuthResponse(access_token=token)
+    return AuthResponse(access_token=token, username=body.username)
 
 @app.post("/auth/login", response_model=AuthResponse)
-def login(body: AuthRequest):
+def login(body: LoginRequest):
     user = database.get_user_by_email(body.email)
     if not user or not verify_password(body.password, user["password_hash"]):
         raise HTTPException(
@@ -107,7 +146,7 @@ def login(body: AuthRequest):
             headers={"WWW-Authenticate": "Bearer"},
         )
     token = create_access_token(sub=body.email)
-    return AuthResponse(access_token=token)
+    return AuthResponse(access_token=token, username=user["username"])
 
 @app.get("/users", response_model=List[dict])
 def get_all_users_endpoint(user=Depends(get_current_user)):
@@ -140,6 +179,26 @@ def invite_users(chat_id: int, body: InviteRequest, user=Depends(get_current_use
             added_count += 1
     return {"message": f"Successfully added {added_count} user(s)."}
 
+@app.delete("/chats/{chat_id}", status_code=204)
+def delete_chat_endpoint(chat_id: int, user: dict = Depends(get_current_user)):
+    """Deletes a chat. Only the owner can delete it."""
+    owner_id = database.get_chat_owner(chat_id)
+    if not owner_id or owner_id != user["id"]:
+        raise HTTPException(status_code=403, detail="Only the chat owner can delete the chat.")
+    database.delete_chat(chat_id)
+    return {}
+
+@app.delete("/chats/{chat_id}/members/{member_id}", status_code=204)
+def remove_member_endpoint(chat_id: int, member_id: int, user: dict = Depends(get_current_user)):
+    """Removes a member from a chat. Only the owner can do this."""
+    owner_id = database.get_chat_owner(chat_id)
+    if not owner_id or owner_id != user["id"]:
+        raise HTTPException(status_code=403, detail="Only the chat owner can remove members.")
+    if owner_id == member_id:
+        raise HTTPException(status_code=400, detail="The owner cannot be removed from the chat.")
+    database.remove_chat_member(chat_id, member_id)
+    return {}
+
 @app.get("/chats/{chat_id}/members", response_model=dict)
 def list_members(chat_id: int, user=Depends(get_current_user)):
     if not database.is_member(chat_id, user["id"]):
@@ -153,32 +212,27 @@ def get_chat_messages_endpoint(chat_id: int, user=Depends(get_current_user)):
     messages = database.get_chat_messages(chat_id)
     return {"messages": messages}
 
-@app.post("/chat")
-def chat_endpoint(message: ChatMessage, user=Depends(get_current_user)):
-    global vectorstore
-    # Require chat membership (create if none)
-    if message.chat_id is None:
-        chat_id = database.create_chat("New Chat", owner_user_id=user["id"])
-    else:
-        chat_id = message.chat_id
-        if not database.is_member(chat_id, user["id"]):
-            # Auto-add if invited logic not happened yet? Prevent access.
-            raise HTTPException(status_code=403, detail="Not a member of chat")
-    history = database.get_chat_messages(chat_id)
-    history_msgs = format_history_from_db(history)
-    if vectorstore is None:
-        bot_response = generate_general_response(message.message, history_msgs)
-    else:
-        bot_response = generate_rag_response(vectorstore, message.message, history_msgs, k=15)
-    if not bot_response:
-        bot_response = "Sorry, I couldn’t generate a response."
-    database.add_message(chat_id, message.message, "user", user_id=user["id"])
-    database.add_message(chat_id, bot_response, "bot", user_id=None)
-    count = len(database.get_chat_messages(chat_id))
-    if count == 2:
-        title = message.message[:30] + ("..." if len(message.message) > 30 else "")
-        database.update_chat_title(chat_id, title)
-    return ChatResponse(response=bot_response, chat_id=chat_id)
+@app.websocket("/ws/{chat_id}")
+async def websocket_endpoint(websocket: WebSocket, chat_id: int, user: dict = Depends(get_current_user_ws)):
+    if not user or not database.is_member(chat_id, user["id"]):
+        await websocket.close(code=4001)
+        return
+
+    await manager.connect(websocket, chat_id)
+    try:
+        while True:
+            data = await websocket.receive_text()
+            # Save message to DB
+            message_id = database.add_message(chat_id, data, "user", user_id=user["id"])
+            # Get full message to broadcast
+            message = database.get_message_with_sender(message_id)
+            import json
+            await manager.broadcast(json.dumps(message), chat_id)
+    except WebSocketDisconnect:
+        manager.disconnect(websocket, chat_id)
+    except Exception as e:
+        print(f"WebSocket Error: {e}")
+        manager.disconnect(websocket, chat_id)
 
 # Make upload async (it awaits file.read()); keep public for now
 @app.post("/upload-pdf")

@@ -1,20 +1,20 @@
 import React, { useState, useRef, useEffect } from "react";
 import { fetchWithAuth } from "../api/fetchWithAuth.ts";
-import { getUserEmail } from "../api/auth.ts";
+import { getUserUsername, getToken } from "../api/auth.ts";
 import axios from "axios";
 
 interface Message {
   id: number;
   content: string;
   sender: "user" | "bot" | "system";
-  sender_email?: string | null;
+  sender_username?: string | null;
 }
 
 interface Chat {
   id: number;
   title: string;
   last_updated: string;
-  owner_email?: string; // added for sidebar display
+  owner_username?: string;
 }
 
 interface PDF {
@@ -25,6 +25,7 @@ interface PDF {
 interface User {
   id: number;
   email: string;
+  username: string;
 }
 
 export default function ChatUI() {
@@ -33,7 +34,7 @@ export default function ChatUI() {
   const [isLoading, setIsLoading] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadedPdfs, setUploadedPdfs] = useState<PDF[]>([]);
-  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   const [chats, setChats] = useState<Chat[]>([]);
   const [currentChatId, setCurrentChatId] = useState<number | null>(null);
   const [showInvite, setShowInvite] = useState(false);
@@ -46,10 +47,51 @@ export default function ChatUI() {
   const [chatMembers, setChatMembers] = useState<User[]>([]);
   const [allUsers, setAllUsers] = useState<User[]>([]);
   const [notification, setNotification] = useState<string | null>(null);
-  const currentUserEmail = getUserEmail();
+  const [chatToDelete, setChatToDelete] = useState<Chat | null>(null);
+  const currentUserUsername = getUserUsername();
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const didMountRef = useRef(false);
+  const ws = useRef<WebSocket | null>(null);
+
+  useEffect(() => {
+    if (!currentChatId) {
+      return;
+    }
+
+    const token = getToken();
+    if (!token) return;
+
+    // Determine WebSocket protocol
+    const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    // Backend is on port 8000, not window.location.host which is 3000
+    const wsHost = window.location.hostname;
+    const wsUrl = `${wsProtocol}//${wsHost}:8000/ws/${currentChatId}?token=${token}`;
+
+    ws.current = new WebSocket(wsUrl);
+
+    ws.current.onopen = () => {
+      console.log("WebSocket connected");
+    };
+
+    ws.current.onmessage = (event) => {
+      const message = JSON.parse(event.data);
+      setMessages((prev) => [...prev, message]);
+    };
+
+    ws.current.onclose = () => {
+      console.log("WebSocket disconnected");
+    };
+
+    ws.current.onerror = (error) => {
+      console.error("WebSocket error:", error);
+    };
+
+    // Cleanup on component unmount or when chat changes
+    return () => {
+      ws.current?.close();
+    };
+  }, [currentChatId]);
 
   const scrollToBottom = () => {
     const container = messagesContainerRef.current;
@@ -149,6 +191,51 @@ export default function ChatUI() {
     }
   };
 
+  const removeMember = async (memberId: number) => {
+    if (!currentChatId) return;
+    try {
+      const res = await fetchWithAuth(
+        `/chats/${currentChatId}/members/${memberId}`,
+        { method: "DELETE" }
+      );
+      if (!res.ok) {
+        setNotification("Failed to remove member.");
+      } else {
+        setNotification("Member removed.");
+        // Refresh member list
+        const newMembers = chatMembers.filter((m) => m.id !== memberId);
+        setChatMembers(newMembers);
+      }
+    } catch (e) {
+      console.error("Error removing member:", e);
+      setNotification("An error occurred while removing the member.");
+    }
+  };
+
+  const deleteChat = async () => {
+    if (!chatToDelete) return;
+    try {
+      const res = await fetchWithAuth(`/chats/${chatToDelete.id}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) {
+        setNotification("Failed to delete chat.");
+      } else {
+        setNotification(`Chat "${chatToDelete.title}" deleted.`);
+        setChats((prev) => prev.filter((c) => c.id !== chatToDelete.id));
+        if (currentChatId === chatToDelete.id) {
+          setCurrentChatId(null);
+          setMessages([]);
+        }
+      }
+    } catch (e) {
+      console.error("Error deleting chat:", e);
+      setNotification("An error occurred while deleting the chat.");
+    } finally {
+      setChatToDelete(null);
+    }
+  };
+
   const loadChatMembersForInvite = async () => {
     if (!currentChatId) return;
     try {
@@ -186,43 +273,15 @@ export default function ChatUI() {
   };
 
   const sendMessage = async () => {
-    if (!inputMessage.trim() || isLoading) return;
-    const userMessage: Message = {
-      id: Date.now(),
-      content: inputMessage,
-      sender: "user",
-    };
-    setMessages((prev) => [...prev, userMessage]);
-    setInputMessage("");
-    setIsLoading(true);
-    try {
-      const res = await fetchWithAuth("/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: inputMessage, chat_id: currentChatId }),
-      });
-      if (!res.ok) throw new Error("Send failed");
-      const data = await res.json();
-      const botMessage: Message = {
-        id: Date.now() + 1,
-        content: data.response,
-        sender: "bot",
-        sender_email: "AI",
-      };
-      setMessages((prev) => [...prev, botMessage]);
-      if (!currentChatId && data.chat_id) {
-        setCurrentChatId(data.chat_id);
-        await loadChats();
-      }
-    } catch (error) {
-      console.error("Chat error:", error);
-      setMessages((prev) => [
-        ...prev,
-        { id: Date.now() + 1, content: "Error.", sender: "bot" },
-      ]);
-    } finally {
-      setIsLoading(false);
+    if (
+      !inputMessage.trim() ||
+      !ws.current ||
+      ws.current.readyState !== WebSocket.OPEN
+    ) {
+      return;
     }
+    ws.current.send(inputMessage);
+    setInputMessage("");
   };
 
   const handleKeyPress = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -314,7 +373,7 @@ export default function ChatUI() {
                 className="close-sidebar"
                 onClick={() => setSidebarOpen(false)}
               >
-                ×
+                «
               </button>
             </div>
             <div className="chat-list">
@@ -344,9 +403,21 @@ export default function ChatUI() {
                           fontStyle: "italic",
                         }}
                       >
-                        owner: {chat.owner_email}
+                        Owner: {chat.owner_username}
                       </span>
                     </div>
+                    {currentUserUsername === chat.owner_username && (
+                      <button
+                        className="delete-chat-button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setChatToDelete(chat);
+                        }}
+                        title="Delete Chat"
+                      >
+                        ×
+                      </button>
+                    )}
                   </div>
                 ))
               )}
@@ -376,12 +447,13 @@ export default function ChatUI() {
             )}
             {messages.map((msg) => {
               const mine =
-                msg.sender === "user" && msg.sender_email === currentUserEmail;
+                msg.sender === "user" &&
+                msg.sender_username === currentUserUsername;
               return (
                 <div
                   key={msg.id}
                   className={`message ${
-                    mine ? "user" : msg.sender === "bot" ? "bot" : "system"
+                    mine ? "user" : msg.sender === "bot" ? "bot" : "other"
                   }`}
                 >
                   <div className="message-content">
@@ -393,7 +465,7 @@ export default function ChatUI() {
                           marginBottom: 4,
                         }}
                       >
-                        {mine ? "You" : msg.sender_email || "User"}
+                        {mine ? "You" : msg.sender_username || "User"}
                       </div>
                     )}
                     <div
@@ -495,7 +567,7 @@ export default function ChatUI() {
             >
               {inviteOptions.map((user) => (
                 <option key={user.id} value={user.email}>
-                  {user.email}
+                  {user.username} ({user.email})
                 </option>
               ))}
             </select>
@@ -534,18 +606,35 @@ export default function ChatUI() {
                 overflowY: "auto",
               }}
             >
-              {chatMembers.map((member) => (
-                <li
-                  key={member.id}
-                  style={{
-                    padding: "6px 0",
-                    borderBottom: "1px solid #eee",
-                    fontSize: "0.9rem",
-                  }}
-                >
-                  {member.email}
-                </li>
-              ))}
+              {chatMembers.map((member) => {
+                const isOwner = currentChat?.owner_username === member.username;
+                return (
+                  <li
+                    key={member.id}
+                    style={{
+                      padding: "6px 0",
+                      borderBottom: "1px solid #eee",
+                      fontSize: "0.9rem",
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                    }}
+                  >
+                    <span>
+                      {member.username} {isOwner && "(Owner)"}
+                    </span>
+                    {currentChat?.owner_username === currentUserUsername &&
+                      !isOwner && (
+                        <button
+                          className="remove-member-button"
+                          onClick={() => removeMember(member.id)}
+                        >
+                          Remove
+                        </button>
+                      )}
+                  </li>
+                );
+              })}
             </ul>
             <button
               className="popup-button"
@@ -554,6 +643,33 @@ export default function ChatUI() {
             >
               Close
             </button>
+          </div>
+        </div>
+      )}
+      {chatToDelete && (
+        <div className="popup-backdrop">
+          <div className="popup-container" style={{ width: 360 }}>
+            <h3 style={{ marginTop: 0 }}>Delete Chat?</h3>
+            <p style={{ margin: "8px 0 16px" }}>
+              Are you sure you want to delete "<b>{chatToDelete.title}</b>"?
+              This action cannot be undone.
+            </p>
+            <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+              <button
+                className="popup-button"
+                style={{ flex: 1, background: "#ef4444" }}
+                onClick={deleteChat}
+              >
+                Delete
+              </button>
+              <button
+                className="popup-button"
+                style={{ flex: 1, background: "#64748b" }}
+                onClick={() => setChatToDelete(null)}
+              >
+                Cancel
+              </button>
+            </div>
           </div>
         </div>
       )}

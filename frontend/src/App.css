@@ -130,18 +130,22 @@
   background: none;
   border: none;
   font-size: 1.5rem;
+  font-weight: bold;
   cursor: pointer;
   color: #666;
   padding: 0;
-  width: 24px;
-  height: 24px;
+  width: 28px;
+  height: 28px;
   display: flex;
   align-items: center;
   justify-content: center;
+  border-radius: 4px;
+  transition: all 0.2s ease;
 }
 
 .close-sidebar:hover {
   color: #333;
+  background-color: #f0f0f0;
 }
 
 .chat-list {
@@ -192,6 +196,26 @@
 .chat-item:hover {
   border-color: #667eea;
   box-shadow: 0 2px 8px rgba(102, 126, 234, 0.1);
+}
+
+.delete-chat-button {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 1.5rem;
+  font-weight: bold;
+  line-height: 1;
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  opacity: 0.4;
+  transition: all 0.2s ease;
+  color: #777;
+}
+
+.delete-chat-button:hover {
+  opacity: 1;
+  background: #fee2e2;
+  color: #b91c1c;
 }
 
 .chat-item.active {
@@ -300,7 +324,8 @@
   justify-content: flex-end;
 }
 
-.message.bot {
+.message.bot,
+.message.other {
   justify-content: flex-start;
 }
 
@@ -323,7 +348,8 @@
   border-bottom-right-radius: 4px;
 }
 
-.message.bot .message-content {
+.message.bot .message-content,
+.message.other .message-content {
   background: #f1f3f4;
   color: #333;
   border-bottom-left-radius: 4px;
@@ -601,6 +627,22 @@
 
 .popup-button:hover {
   background: #0284c7;
+}
+
+.remove-member-button {
+  background: #fee2e2;
+  color: #b91c1c;
+  border: 1px solid #fecaca;
+  padding: 2px 8px;
+  font-size: 0.75rem;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.remove-member-button:hover {
+  background: #fca5a5;
+  color: #7f1d1d;
 }
 
 .toast-notification {

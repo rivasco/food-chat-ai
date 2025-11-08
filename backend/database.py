@@ -58,11 +58,25 @@ def init_db():
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 email TEXT UNIQUE NOT NULL,
+                username TEXT UNIQUE NOT NULL,
                 password_hash TEXT NOT NULL,
                 created_at TEXT NOT NULL
             );
             """
         )
+        # Ensure username column exists for migration
+        cur.execute("PRAGMA table_info(users)")
+        cols = [r[1] for r in cur.fetchall()]
+        if "username" not in cols:
+            try:
+                # Add with a default value for existing rows, then make it NOT NULL
+                cur.execute("ALTER TABLE users ADD COLUMN username TEXT")
+                cur.execute("UPDATE users SET username = SUBSTR(email, 0, INSTR(email, '@')) || id WHERE username IS NULL")
+                # In a real migration, you'd need to handle potential duplicates from the default
+                # For this project, we'll assume it's for new setups or dev.
+            except Exception:
+                pass # May fail if run multiple times, that's ok.
+
         # Ensure chats has owner_user_id
         cur.execute("PRAGMA table_info(chats)")
         cols = [r[1] for r in cur.fetchall()]
@@ -197,6 +211,13 @@ def add_chat_member(chat_id: int, user_id: int):
         )
         conn.commit()
 
+def remove_chat_member(chat_id: int, user_id: int):
+    """Remove a member from a chat."""
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute("DELETE FROM chat_members WHERE chat_id = ? AND user_id = ?", (chat_id, user_id))
+        conn.commit()
+
 def is_member(chat_id: int, user_id: int) -> bool:
     with get_conn() as conn:
         cur = conn.cursor()
@@ -206,24 +227,32 @@ def is_member(chat_id: int, user_id: int) -> bool:
         )
         return cur.fetchone() is not None
 
+def get_chat_owner(chat_id: int):
+    """Get the owner_user_id for a given chat."""
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT owner_user_id FROM chats WHERE id = ?", (chat_id,))
+        row = cur.fetchone()
+        return row[0] if row else None
+
 def get_chat_members(chat_id: int):
     with get_conn() as conn:
         cur = conn.cursor()
         cur.execute("""
-            SELECT u.id, u.email
+            SELECT u.id, u.email, u.username
             FROM chat_members cm
             JOIN users u ON u.id = cm.user_id
             WHERE cm.chat_id = ?
-            ORDER BY u.email
+            ORDER BY u.username
         """, (chat_id,))
-        return [{"id": r[0], "email": r[1]} for r in cur.fetchall()]
+        return [{"id": r[0], "email": r[1], "username": r[2]} for r in cur.fetchall()]
 
 def get_user_chats(user_id: int):
     with get_conn() as conn:
         cur = conn.cursor()
         cur.execute("""
             SELECT c.id, c.title, c.created_date, c.last_updated,
-                   u.email as owner_email
+                   u.username as owner_username
             FROM chats c
             JOIN users u ON u.id = c.owner_user_id
             JOIN chat_members cm ON cm.chat_id = c.id
@@ -237,34 +266,36 @@ def get_user_chats(user_id: int):
                 "title": r[1],
                 "created_date": r[2],
                 "last_updated": r[3],
-                "owner_email": r[4],
+                "owner_username": r[4],
             } for r in rows
         ]
 
 def get_chat_messages(chat_id):
-    """Get all messages for a chat"""
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    
-    cursor.execute('''
-        SELECT id, content, sender, timestamp
-        FROM messages
-        WHERE chat_id = ?
-        ORDER BY timestamp ASC
-    ''', (chat_id,))
-    
-    messages = cursor.fetchall()
-    conn.close()
-    
-    return [
-        {
-            "id": msg[0],
-            "content": msg[1],
-            "sender": msg[2],
-            "timestamp": msg[3]
-        }
-        for msg in messages
-    ]
+    """Get all messages for a chat, including sender username."""
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT m.id, m.content, m.sender, m.timestamp, u.username as sender_username
+            FROM messages m
+            LEFT JOIN users u ON u.id = m.user_id
+            WHERE m.chat_id = ?
+            ORDER BY m.timestamp ASC
+        """, (chat_id,))
+        rows = cur.fetchall()
+        return [dict(row) for row in rows]
+
+def get_message_with_sender(message_id: int):
+    """Get a single message by its ID, including sender username."""
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT m.id, m.content, m.sender, m.timestamp, u.username as sender_username
+            FROM messages m
+            LEFT JOIN users u ON u.id = m.user_id
+            WHERE m.id = ?
+        """, (message_id,))
+        row = cur.fetchone()
+        return dict(row) if row else None
 
 def add_message(chat_id, content, sender_type, user_id=None):
     with get_conn() as conn:
@@ -293,12 +324,12 @@ def delete_chat(chat_id):
         conn.commit()
 
 # --- User helpers ---
-def create_user(email: str, password_hash: str):
+def create_user(email: str, username: str, password_hash: str):
     with get_conn() as conn:
         cur = conn.cursor()
         cur.execute(
-            "INSERT INTO users (email, password_hash, created_at) VALUES (?, ?, ?)",
-            (email.lower(), password_hash, datetime.utcnow().isoformat()),
+            "INSERT INTO users (email, username, password_hash, created_at) VALUES (?, ?, ?, ?)",
+            (email.lower(), username, password_hash, datetime.utcnow().isoformat()),
         )
         conn.commit()
         return cur.lastrowid
@@ -311,14 +342,20 @@ def get_user_by_email(email: str):
         return dict(row) if row else None
 
 def get_all_users():
-    """Returns all users (id and email)."""
+    """Returns all users (id, email, and username)."""
     with get_conn() as conn:
         cur = conn.cursor()
-        cur.execute("SELECT id, email FROM users ORDER BY email")
-        return [{"id": r[0], "email": r[1]} for r in cur.fetchall()]
+        cur.execute("SELECT id, email, username FROM users ORDER BY username")
+        return [{"id": r[0], "email": r[1], "username": r[2]} for r in cur.fetchall()]
 
 def ensure_user(email: str, password_hash: str = "placeholder"):
     user = get_user_by_email(email)
     if user:
         return user["id"]
-    return create_user(email, password_hash)
+    # Generate a default username from email prefix
+    username = email.split('@')[0]
+    try:
+        return create_user(email, username, password_hash)
+    except sqlite3.IntegrityError:
+        # If generated username conflicts, append a number
+        return create_user(email, f"{username}{datetime.now().microsecond}", password_hash)

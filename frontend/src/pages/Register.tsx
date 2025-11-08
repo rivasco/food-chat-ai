@@ -4,6 +4,7 @@ import { register, isAuthed } from "../api/auth.ts";
 
 export default function Register() {
   const [email, setEmail] = useState("");
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [err, setErr] = useState<string | null>(null);
   const navigate = useNavigate();
@@ -16,7 +17,7 @@ export default function Register() {
     e.preventDefault();
     setErr(null);
     try {
-      await register(email, password);
+      await register(email, username, password);
       setShowPopup(true); // show modal instead of immediate redirect
     } catch (e: any) {
       setErr(e.message || "Registration failed");
@@ -48,6 +49,21 @@ export default function Register() {
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           required
+          style={{
+            width: "100%",
+            padding: 10,
+            marginBottom: 12,
+            borderRadius: 6,
+            border: "1px solid #ccc",
+          }}
+        />
+        <input
+          placeholder="Username"
+          type="text"
+          value={username}
+          onChange={(e) => setUsername(e.target.value)}
+          required
+          minLength={3}
           style={{
             width: "100%",
             padding: 10,
