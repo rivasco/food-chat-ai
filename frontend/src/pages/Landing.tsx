@@ -5,17 +5,11 @@ import { isAuthed } from "../api/auth.ts";
 export default function Landing() {
   if (isAuthed()) return <Navigate to="/app" replace />;
   return (
-    <div
-      style={{
-        minHeight: "100vh",
-        display: "grid",
-        placeItems: "center",
-        background: "linear-gradient(135deg,#0ea5e9,#6366f1)",
-      }}
-    >
+    <div className="landing-background">
       <div
         style={{
-          background: "white",
+          background: "rgba(255, 255, 255, 0.9)",
+          backdropFilter: "blur(10px)",
           padding: 40,
           borderRadius: 16,
           maxWidth: 520,
@@ -24,8 +18,10 @@ export default function Landing() {
           textAlign: "center",
         }}
       >
-        <h1 style={{ margin: 0, fontSize: 32 }}>Custom Chatbot</h1>
-        <p style={{ color: "#555", marginTop: 12 }}>
+        <h1 style={{ margin: "0 0 4px", fontSize: 32, color: "#1e293b" }}>
+          Mingle AI
+        </h1>
+        <p style={{ color: "#475569", marginTop: 12 }}>
           Upload PDFs and chat with your documents using AI.
         </p>
         <div style={{ display: "flex", gap: 12, marginTop: 24 }}>

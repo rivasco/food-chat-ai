@@ -27,7 +27,7 @@ function ChatPage() {
     <div>
       <div className="topnav">
         <div className="topnav-left">
-          <span className="brand">Custom Chatbot</span>
+          <span className="brand">Mingle AI</span>
         </div>
         <div className="topnav-right">
           <div className="profile">
