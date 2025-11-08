@@ -11,4 +11,22 @@ if __name__ == "__main__":
     print("Press Ctrl+C to stop the server")
     print("-" * 50)
     
-    uvicorn.run("backend.backend:app", host="0.0.0.0", port=8000, reload=True, log_level="info")
+    uvicorn.run(
+        "backend.backend:app",
+        host="127.0.0.1",
+        port=8000,
+        reload=True,  # keep dev reload
+        reload_dirs=["backend"],  # only watch backend code
+        reload_includes=["*.py"],
+        reload_excludes=[
+            "venv/*",
+            ".venv/*",
+            "frontend/*",
+            "node_modules/*",
+            "backend/faiss_index/*",
+            "**/__pycache__/*",
+            "*.db",
+            "*.log",
+            "*.pyc",
+        ],
+    )
