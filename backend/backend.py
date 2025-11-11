@@ -66,7 +66,7 @@ class ChatListResponse(BaseModel):
 
 class RegisterRequest(BaseModel):
     email: EmailStr
-    username: constr(min_length=3, max_length=20)
+    username: constr(min_length=3, max_length=20) # type: ignore
     password: str
 
 class LoginRequest(BaseModel):
