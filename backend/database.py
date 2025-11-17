@@ -105,6 +105,23 @@ def init_db():
                 FOREIGN KEY (user_id) REFERENCES users(id)
             );
         """)
+
+        # Restaurants table
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS restaurants (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                email TEXT UNIQUE NOT NULL,
+                name TEXT NOT NULL,
+                website TEXT,
+                password_hash TEXT NOT NULL,
+                bid_amount REAL DEFAULT 0,
+                max_budget REAL DEFAULT 0,
+                charged_amount REAL DEFAULT 0,
+                created_at TEXT NOT NULL
+            );
+            """
+        )
         conn.commit()
 
 def add_pdf(filename, file_size):
@@ -359,3 +376,37 @@ def ensure_user(email: str, password_hash: str = "placeholder"):
     except sqlite3.IntegrityError:
         # If generated username conflicts, append a number
         return create_user(email, f"{username}{datetime.now().microsecond}", password_hash)
+
+# --- Restaurant helpers ---
+def create_restaurant(name: str, email: str, password_hash: str, website: str):
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO restaurants (name, email, password_hash, website, created_at) VALUES (?, ?, ?, ?, ?)",
+            (name, email.lower(), password_hash, website, datetime.utcnow().isoformat()),
+        )
+        conn.commit()
+        return cur.lastrowid
+
+def get_restaurant_by_email(email: str):
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM restaurants WHERE email = ?", (email.lower(),))
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+def get_restaurant_bidding_rules(restaurant_id: int):
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT bid_amount, max_budget, charged_amount FROM restaurants WHERE id = ?", (restaurant_id,))
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+def update_restaurant_bidding_rules(restaurant_id: int, bid_amount: float, max_budget: float):
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE restaurants SET bid_amount = ?, max_budget = ? WHERE id = ?",
+            (bid_amount, max_budget, restaurant_id)
+        )
+        conn.commit()

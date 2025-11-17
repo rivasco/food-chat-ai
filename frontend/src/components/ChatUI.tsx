@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from "react";
-import { fetchWithAuth } from "../api/fetchWithAuth.ts";
-import { getUserUsername, getToken } from "../api/auth.ts";
+import { fetchWithAuth } from "../api/fetchWithAuth";
+import { getUserUsername, getToken } from "../api/auth";
 import axios from "axios";
 
 interface Message {
@@ -33,6 +33,7 @@ export default function ChatUI() {
   const [inputMessage, setInputMessage] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [pendingBot, setPendingBot] = useState(false);
   const [uploadedPdfs, setUploadedPdfs] = useState<PDF[]>([]);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [chats, setChats] = useState<Chat[]>([]);
@@ -48,6 +49,11 @@ export default function ChatUI() {
   const [allUsers, setAllUsers] = useState<User[]>([]);
   const [notification, setNotification] = useState<string | null>(null);
   const [chatToDelete, setChatToDelete] = useState<Chat | null>(null);
+
+  // Mention autocomplete state
+  const [mentionOpen, setMentionOpen] = useState(false);
+  const [mentionQuery, setMentionQuery] = useState("");
+  const [mentionIndex, setMentionIndex] = useState(0);
   const currentUserUsername = getUserUsername();
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
@@ -76,7 +82,34 @@ export default function ChatUI() {
 
     ws.current.onmessage = (event) => {
       const message = JSON.parse(event.data);
-      setMessages((prev) => [...prev, message]);
+      setMessages((prev) => {
+        let next = [...prev];
+        // If a real bot message arrives, remove any loading placeholder and append it
+        if (message.sender === "bot") {
+          setPendingBot(false);
+          next = next.filter((m) => !(m as any).loading);
+          next.push(message);
+          return next;
+        }
+        // Append incoming non-bot message
+        next.push(message);
+        // After our own @recme message echo, append loader as the last item (no duplicates)
+        if (
+          message.sender === "user" &&
+          message.sender_username === currentUserUsername &&
+          /@recme\b/i.test(message.content || "") &&
+          !next.some((m: any) => m.loading)
+        ) {
+          next.push({
+            id: -1,
+            content: "",
+            sender: "bot",
+            sender_username: "Mingle AI",
+            loading: true,
+          } as any);
+        }
+        return next;
+      });
     };
 
     ws.current.onclose = () => {
@@ -248,6 +281,14 @@ export default function ChatUI() {
     }
   };
 
+  // Proactively load members when switching chats (for mentions)
+  useEffect(() => {
+    if (currentChatId) {
+      loadChatMembersForInvite();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentChatId]);
+
   const inviteUsers = async () => {
     if (!currentChatId || selectedInviteEmails.length === 0) return;
     try {
@@ -280,14 +321,106 @@ export default function ChatUI() {
     ) {
       return;
     }
+
+    // If invoking @recme, mark pending; loader will be appended after our user echo arrives
+    if (/@recme\b/i.test(inputMessage)) {
+      setPendingBot(true);
+    }
     ws.current.send(inputMessage);
     setInputMessage("");
+    setMentionOpen(false);
   };
 
   const handleKeyPress = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (mentionOpen) return; // don't send while selecting mention
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       sendMessage();
+    }
+  };
+
+  // Mentions: compute options (all chat member usernames + 'recme')
+  const mentionOptions = [
+    { label: "recme", value: "recme" },
+    ...chatMembers.map((m) => ({ label: m.username, value: m.username })),
+  ];
+
+  const updateMentionState = (value: string, caret: number) => {
+    // Find the last '@' before caret without spaces
+    const uptoCaret = value.slice(0, caret);
+    const atIndex = uptoCaret.lastIndexOf("@");
+    if (atIndex === -1) {
+      setMentionOpen(false);
+      setMentionQuery("");
+      setMentionIndex(0);
+      return;
+    }
+    // Ensure there's no whitespace between '@' and caret
+    const afterAt = uptoCaret.slice(atIndex + 1);
+    if (/\s/.test(afterAt)) {
+      setMentionOpen(false);
+      setMentionQuery("");
+      setMentionIndex(0);
+      return;
+    }
+    setMentionOpen(true);
+    setMentionQuery(afterAt.toLowerCase());
+    setMentionIndex(0);
+  };
+
+  const filteredMentions = mentionOptions.filter((opt) =>
+    opt.label.toLowerCase().startsWith(mentionQuery)
+  );
+
+  const insertMention = (username: string) => {
+    const textarea = document.querySelector(
+      ".input-container textarea"
+    ) as HTMLTextAreaElement | null;
+    if (!textarea) return;
+    const caret = textarea.selectionStart;
+    const val = inputMessage;
+    const uptoCaret = val.slice(0, caret);
+    const atIndex = uptoCaret.lastIndexOf("@");
+    if (atIndex === -1) return;
+    const before = val.slice(0, atIndex);
+    const after = val.slice(caret);
+    const insertion = `@${username} `;
+    const newVal = before + insertion + after;
+    setInputMessage(newVal);
+    setMentionOpen(false);
+    setMentionQuery("");
+    setMentionIndex(0);
+    // place caret after insertion
+    requestAnimationFrame(() => {
+      const pos = before.length + insertion.length;
+      textarea.selectionStart = textarea.selectionEnd = pos;
+      textarea.focus();
+    });
+  };
+
+  const onTextareaChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const val = e.target.value;
+    setInputMessage(val);
+    updateMentionState(val, e.target.selectionStart || val.length);
+  };
+
+  const onTextareaKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (!mentionOpen) return;
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setMentionIndex((i) =>
+        Math.min(i + 1, Math.max(filteredMentions.length - 1, 0))
+      );
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setMentionIndex((i) => Math.max(i - 1, 0));
+    } else if (e.key === "Enter" || e.key === "Tab") {
+      if (filteredMentions.length > 0) {
+        e.preventDefault();
+        insertMention(filteredMentions[Math.max(mentionIndex, 0)].value);
+      }
+    } else if (e.key === "Escape") {
+      setMentionOpen(false);
     }
   };
 
@@ -449,11 +582,12 @@ export default function ChatUI() {
               const mine =
                 msg.sender === "user" &&
                 msg.sender_username === currentUserUsername;
+              const isBot = msg.sender === "bot";
               return (
                 <div
                   key={msg.id}
                   className={`message ${
-                    mine ? "user" : msg.sender === "bot" ? "bot" : "other"
+                    mine ? "user" : isBot ? "bot" : "other"
                   }`}
                 >
                   <div className="message-content">
@@ -468,11 +602,30 @@ export default function ChatUI() {
                         {mine ? "You" : msg.sender_username || "User"}
                       </div>
                     )}
-                    <div
-                      dangerouslySetInnerHTML={{
-                        __html: msg.content.replace(/\n/g, "<br>"),
-                      }}
-                    />
+                    {isBot && (
+                      <div
+                        style={{
+                          fontSize: "0.65rem",
+                          opacity: 0.8,
+                          marginBottom: 4,
+                        }}
+                      >
+                        Mingle AI
+                      </div>
+                    )}
+                    {(msg as any).loading ? (
+                      <div className="typing-indicator">
+                        <span></span>
+                        <span></span>
+                        <span></span>
+                      </div>
+                    ) : (
+                      <div
+                        dangerouslySetInnerHTML={{
+                          __html: (msg.content || "").replace(/\n/g, "<br>"),
+                        }}
+                      />
+                    )}
                   </div>
                 </div>
               );
@@ -482,7 +635,8 @@ export default function ChatUI() {
           <div className="input-container">
             <textarea
               value={inputMessage}
-              onChange={(e) => setInputMessage(e.target.value)}
+              onChange={onTextareaChange}
+              onKeyDown={onTextareaKeyDown}
               onKeyPress={handleKeyPress}
               placeholder={
                 currentChatId ? "Type..." : "Create or select a chat first"
@@ -490,6 +644,24 @@ export default function ChatUI() {
               disabled={isUploading || !currentChatId}
               rows={1}
             />
+            {mentionOpen && filteredMentions.length > 0 && (
+              <div className="mention-dropdown">
+                {filteredMentions.slice(0, 6).map((opt, idx) => (
+                  <div
+                    key={opt.value}
+                    className={`mention-item ${
+                      idx === mentionIndex ? "active" : ""
+                    }`}
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      insertMention(opt.value);
+                    }}
+                  >
+                    @{opt.label}
+                  </div>
+                ))}
+              </div>
+            )}
             <button
               onClick={sendMessage}
               disabled={!inputMessage.trim() || isLoading || !currentChatId}

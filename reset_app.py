@@ -15,7 +15,7 @@ def reset_app():
         "backend/chatbot.db",
         "backend/faiss_index/",
         "backend/__pycache__/",
-        "frontend/node_modules/",
+        # "frontend/node_modules/",
         "frontend/build/"
     ]
     

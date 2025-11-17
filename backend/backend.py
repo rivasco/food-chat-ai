@@ -2,6 +2,8 @@ import os
 import tempfile
 import traceback
 from typing import Optional, List
+import asyncio
+import re
 from fastapi import FastAPI, File, UploadFile, HTTPException, Header, Depends, WebSocket, WebSocketDisconnect, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, EmailStr, constr
@@ -11,6 +13,7 @@ from backend.data_storage import (
 )
 from backend.database import add_pdf, get_all_pdfs, delete_pdf, create_chat, get_all_chats, get_chat_messages, add_message, update_chat_title, delete_chat, get_message_with_sender
 from . import database
+from . import auth
 from .auth import hash_password, verify_password, create_access_token, get_email_from_token
 
 index_path = os.path.join(os.path.dirname(__file__), "faiss_index")
@@ -78,6 +81,21 @@ class AuthResponse(BaseModel):
     token_type: str = "bearer"
     username: str
 
+class AuthRestaurantResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    name: str
+
+class RestaurantRegisterRequest(BaseModel):
+    name: str
+    email: EmailStr
+    password: str
+    website: str
+
+class BiddingRulesRequest(BaseModel):
+    bid_amount: float
+    max_budget: float
+
 @app.on_event("startup")
 def startup():
     """Initialize the app on startup"""
@@ -110,6 +128,23 @@ def get_current_user(authorization: str = Header(...)):
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
     return user  # dict with id, email, ...
+
+def get_current_restaurant(authorization: str = Header(...)):
+    if not authorization.lower().startswith("bearer "):
+        raise HTTPException(status_code=401, detail="Invalid auth header")
+    token = authorization.split(" ", 1)[1].strip()
+    email = get_email_from_token(token)
+    if not email:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    
+    user_type = auth.get_user_type_from_token(token)
+    if user_type != "restaurant":
+        raise HTTPException(status_code=403, detail="Not a restaurant user")
+
+    restaurant = database.get_restaurant_by_email(email)
+    if not restaurant:
+        raise HTTPException(status_code=401, detail="Restaurant not found")
+    return restaurant
 
 async def get_current_user_ws(token: str = Query(...)):
     if not token:
@@ -145,14 +180,52 @@ def login(body: LoginRequest):
             detail="Invalid credentials",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    token = create_access_token(sub=body.email)
+    token = create_access_token(sub=body.email, user_type="user")
     return AuthResponse(access_token=token, username=user["username"])
+
+@app.post("/api/register_restaurant", response_model=AuthRestaurantResponse)
+def register_restaurant(body: RestaurantRegisterRequest):
+    if database.get_restaurant_by_email(body.email):
+        raise HTTPException(status_code=400, detail="Email already registered")
+    
+    try:
+        database.create_restaurant(body.name, body.email, hash_password(body.password), body.website)
+    except database.sqlite3.IntegrityError:
+        raise HTTPException(status_code=400, detail="Restaurant with this email already exists")
+
+    token = create_access_token(sub=body.email, user_type="restaurant")
+    return AuthRestaurantResponse(access_token=token, name=body.name)
+
+@app.post("/api/login_restaurant", response_model=AuthRestaurantResponse)
+def login_restaurant(body: LoginRequest):
+    restaurant = database.get_restaurant_by_email(body.email)
+    if not restaurant or not verify_password(body.password, restaurant["password_hash"]):
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    token = create_access_token(sub=body.email, user_type="restaurant")
+    return AuthRestaurantResponse(access_token=token, name=restaurant["name"])
+
+@app.get("/api/bidding", response_model=BiddingRulesRequest)
+def get_bidding_rules(restaurant: dict = Depends(get_current_restaurant)):
+    rules = database.get_restaurant_bidding_rules(restaurant["id"])
+    if not rules:
+        raise HTTPException(status_code=404, detail="Bidding rules not found")
+    return rules
+
+@app.post("/api/bidding", status_code=204)
+def update_bidding_rules(body: BiddingRulesRequest, restaurant: dict = Depends(get_current_restaurant)):
+    database.update_restaurant_bidding_rules(restaurant["id"], body.bid_amount, body.max_budget)
+    return {}
 
 @app.get("/users", response_model=List[dict])
 def get_all_users_endpoint(user=Depends(get_current_user)):
     """Returns a list of all users (id and email)."""
     users = database.get_all_users()
     return users
+
 
 # --- Group Chat Endpoints ---
 
@@ -228,6 +301,58 @@ async def websocket_endpoint(websocket: WebSocket, chat_id: int, user: dict = De
             message = database.get_message_with_sender(message_id)
             import json
             await manager.broadcast(json.dumps(message), chat_id)
+
+            # Detect @recme trigger (case-insensitive, word boundary)
+            if re.search(r"@recme\b", data, flags=re.IGNORECASE):
+                # Offload summary generation to a thread to avoid blocking event loop
+                async def _summarize_and_broadcast():
+                    try:
+                        # Fetch recent chat history (last 100 messages)
+                        rows = await asyncio.to_thread(database.get_chat_messages, chat_id)
+                        history_msgs = format_history_from_db(rows)
+
+                        # Build a concise summary using LLM without retrieval
+                        from langchain_openai import ChatOpenAI
+                        from langchain_core.messages import SystemMessage, HumanMessage
+
+                        llm = ChatOpenAI(model_name="gpt-4o", temperature=0)
+                        system = SystemMessage(content=(
+                            "You are a precise assistant that infers restaurant preferences from a group chat.\n"
+                            "Analyze the conversation and infer: cuisine(s), location(s), and any constraints (budget, distance, dietary).\n"
+                            "If you can infer a clear target, respond with EXACTLY: \n"
+                            "I will give you restaurant recommendations for <summary>.\n\n"
+                            "If you cannot infer a clear target, respond with EXACTLY: \n"
+                            "I couldn't identify what you're looking for. Please specify cuisine and location.\n\n"
+                            "Do not add any extra text, bullets, explanations, or markdown."
+                        ))
+                        # Use the last few user/bot messages as context
+                        prompt = HumanMessage(content=(
+                            "From this chat history, infer what the group wants."
+                        ))
+                        resp = await asyncio.to_thread(llm.invoke, [system, *history_msgs[-40:], prompt])
+                        bot_text = (getattr(resp, "content", "") or "").strip()
+                        if not bot_text:
+                            bot_text = (
+                                "I couldn't identify what you're looking for. Please specify cuisine and location."
+                            )
+
+                        # Save bot message and broadcast
+                        bot_id = await asyncio.to_thread(database.add_message, chat_id, bot_text, "bot", None)
+                        bot_msg = await asyncio.to_thread(database.get_message_with_sender, bot_id)
+                        await manager.broadcast(json.dumps(bot_msg), chat_id)
+                    except Exception as e:
+                        # On any failure, send a safe fallback once
+                        try:
+                            fallback = (
+                                "I couldn't identify what you're looking for. Please specify cuisine and location."
+                            )
+                            bot_id = await asyncio.to_thread(database.add_message, chat_id, fallback, "bot", None)
+                            bot_msg = await asyncio.to_thread(database.get_message_with_sender, bot_id)
+                            await manager.broadcast(json.dumps(bot_msg), chat_id)
+                        except Exception:
+                            pass
+
+                asyncio.create_task(_summarize_and_broadcast())
     except WebSocketDisconnect:
         manager.disconnect(websocket, chat_id)
     except Exception as e:

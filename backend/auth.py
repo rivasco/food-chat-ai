@@ -26,9 +26,9 @@ def verify_password(plain_password: str, password_hash: str) -> bool:
         return False
     return pwd_context.verify(plain_password, password_hash)
 
-def create_access_token(sub: str, expires_delta: Optional[timedelta] = None) -> str:
+def create_access_token(sub: str, user_type: str = "user", expires_delta: Optional[timedelta] = None) -> str:
     expire = datetime.utcnow() + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
-    payload = {"sub": sub, "exp": expire}
+    payload = {"sub": sub, "exp": expire, "type": user_type}
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
 def decode_access_token(token: str) -> Optional[dict]:
@@ -40,3 +40,7 @@ def decode_access_token(token: str) -> Optional[dict]:
 def get_email_from_token(token: str) -> Optional[str]:
     payload = decode_access_token(token)
     return payload.get("sub") if payload else None
+
+def get_user_type_from_token(token: str) -> Optional[str]:
+    payload = decode_access_token(token)
+    return payload.get("type") if payload else None

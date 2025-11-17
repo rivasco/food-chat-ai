@@ -366,6 +366,7 @@
   display: flex;
   gap: 4px;
   align-items: center;
+  margin-top: 6px;
 }
 
 .typing-indicator span {
@@ -404,6 +405,7 @@
   border-top: 1px solid #e9ecef;
   gap: 0.5rem;
   align-items: flex-end;
+  position: relative;
 }
 
 .input-container textarea {
@@ -452,6 +454,32 @@
   cursor: not-allowed;
   transform: none;
   box-shadow: none;
+}
+
+/* Mentions dropdown */
+.mention-dropdown {
+  position: absolute;
+  bottom: 52px;
+  left: 12px;
+  min-width: 220px;
+  max-width: 320px;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.12);
+  z-index: 50;
+  overflow: hidden;
+}
+
+.mention-item {
+  padding: 8px 10px;
+  font-size: 0.95rem;
+  cursor: pointer;
+}
+
+.mention-item:hover,
+.mention-item.active {
+  background: #f3f4f6;
 }
 
 /* Scrollbar styling */
@@ -705,3 +733,202 @@
 }
 
 /* (Popup & existing styles already support new modal; no extra changes required) */
+
+/* --- Shared form/card styles --- */
+.card {
+  max-width: 520px;
+  margin: 80px auto;
+  padding: 24px;
+  background: #ffffff;
+  border-radius: 12px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.form {
+  display: block;
+}
+
+.form-row {
+  margin-bottom: 12px;
+}
+
+.form-label {
+  display: block;
+  margin-bottom: 6px;
+  color: #374151;
+  font-size: 0.92rem;
+}
+
+.form-input {
+  width: 100%;
+  padding: 10px;
+  border-radius: 6px;
+  border: 1px solid #e5e7eb;
+  font: inherit;
+}
+
+.form-input[readonly] {
+  background: #f9fafb;
+  color: #111827;
+}
+
+.btn {
+  width: 100%;
+  padding: 12px;
+  border: none;
+  border-radius: 6px;
+  font-weight: 600;
+  cursor: pointer;
+  display: block;
+  text-decoration: none;
+}
+
+.btn-primary {
+  background: #0ea5e9;
+  color: #fff;
+}
+
+.btn-primary:hover {
+  background: #0284c7;
+}
+
+.btn-success {
+  background: #10b981;
+  color: #fff;
+}
+
+.btn-success:hover {
+  background: #0f9d75;
+}
+
+.text-error {
+  color: #dc2626;
+}
+
+.text-success {
+  color: #059669;
+}
+
+.muted {
+  color: #6b7280;
+}
+
+/* spacing utilities */
+.mt-0 {
+  margin-top: 0;
+}
+.mt-8 {
+  margin-top: 8px;
+}
+.mb-16 {
+  margin-bottom: 16px;
+}
+
+/* Landing layout */
+.landing-wrapper {
+  background: rgba(255, 255, 255, 0.9);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  padding: 32px;
+  border-radius: 16px;
+  max-width: 960px;
+  width: 92%;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.2);
+  text-align: center;
+}
+
+.landing-title {
+  margin: 0 0 6px 0;
+  font-size: 2rem;
+  font-weight: 700;
+  background: linear-gradient(135deg, #0ea5e9, #10b981);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.landing-subtitle {
+  margin: 0 auto;
+  max-width: 640px;
+  color: #475569;
+}
+
+.landing-grid {
+  display: grid;
+  gap: 20px;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  margin-top: 24px;
+}
+
+/* Compact cards for landing tiles to avoid overflow/overlap */
+.landing-card {
+  max-width: 100%;
+  margin: 0;
+  padding: 20px;
+}
+
+/* Selectable landing cards */
+.landing-card.selectable {
+  border: 1px solid #e5e7eb;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+  cursor: pointer;
+}
+
+.landing-card.selectable:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 20px rgba(0, 0, 0, 0.12);
+  border-color: #cbd5e1;
+}
+
+.landing-card.selected {
+  border-color: #0ea5e9;
+  box-shadow: 0 16px 28px rgba(14, 165, 233, 0.25);
+}
+
+.landing-card .landing-icon {
+  width: 48px;
+  height: 48px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  background: #f0f9ff;
+  color: #0284c7;
+  margin-bottom: 10px;
+  font-size: 24px;
+}
+
+.landing-card h3 {
+  font-size: 1.1rem;
+}
+
+.landing-desc {
+  color: #64748b;
+  font-size: 0.95rem;
+  margin-top: 6px;
+}
+
+.landing-cta {
+  overflow: hidden;
+  max-height: 0;
+  opacity: 0;
+  transition: max-height 0.25s ease, opacity 0.25s ease, margin-top 0.25s ease;
+}
+
+.landing-card.selected .landing-cta {
+  max-height: 200px;
+  opacity: 1;
+  margin-top: 14px;
+}
+
+.btn-group {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+@media (max-width: 520px) {
+  .btn-group {
+    grid-template-columns: 1fr;
+  }
+}
