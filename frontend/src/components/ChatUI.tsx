@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from "react";
 import { fetchWithAuth } from "../api/fetchWithAuth";
 import { getUserUsername, getToken } from "../api/auth";
 import axios from "axios";
+import ReactMarkdown from "react-markdown";
 
 interface Message {
   id: number;
@@ -49,6 +50,8 @@ export default function ChatUI() {
   const [allUsers, setAllUsers] = useState<User[]>([]);
   const [notification, setNotification] = useState<string | null>(null);
   const [chatToDelete, setChatToDelete] = useState<Chat | null>(null);
+  const [isRenaming, setIsRenaming] = useState(false);
+  const [renameTitle, setRenameTitle] = useState("");
 
   // Mention autocomplete state
   const [mentionOpen, setMentionOpen] = useState(false);
@@ -269,6 +272,32 @@ export default function ChatUI() {
     }
   };
 
+  const handleRenameChat = async () => {
+    if (!currentChatId || !renameTitle.trim()) return;
+    try {
+      const res = await fetchWithAuth(`/chats/${currentChatId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: renameTitle }),
+      });
+      if (!res.ok) {
+        setNotification("Failed to rename chat.");
+        return;
+      }
+      // Update local state
+      setChats((prev) =>
+        prev.map((c) =>
+          c.id === currentChatId ? { ...c, title: renameTitle } : c
+        )
+      );
+      setNotification("Chat renamed successfully.");
+      setIsRenaming(false);
+    } catch (e) {
+      console.error("Error renaming chat:", e);
+      setNotification("An error occurred while renaming the chat.");
+    }
+  };
+
   const loadChatMembersForInvite = async () => {
     if (!currentChatId) return;
     try {
@@ -342,7 +371,9 @@ export default function ChatUI() {
   // Mentions: compute options (all chat member usernames + 'recme')
   const mentionOptions = [
     { label: "recme", value: "recme" },
-    ...chatMembers.map((m) => ({ label: m.username, value: m.username })),
+    ...chatMembers
+      .filter((m) => m.username !== currentUserUsername)
+      .map((m) => ({ label: m.username, value: m.username })),
   ];
 
   const updateMentionState = (value: string, caret: number) => {
@@ -481,7 +512,129 @@ export default function ChatUI() {
               </button>
             </>
           )}
-          <h1>{currentChat ? currentChat.title : "Group Chat"}</h1>
+          {currentChat && isRenaming ? (
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <input
+                value={renameTitle}
+                onChange={(e) => setRenameTitle(e.target.value)}
+                style={{
+                  fontSize: "1.1rem",
+                  padding: "6px 10px",
+                  borderRadius: 6,
+                  border: "1px solid #ccc",
+                  background: "white",
+                  color: "#333",
+                  minWidth: "200px",
+                }}
+                autoFocus
+                onKeyPress={(e) => e.key === "Enter" && handleRenameChat()}
+              />
+              <button
+                onClick={handleRenameChat}
+                style={{
+                  background: "rgba(255,255,255,0.2)",
+                  border: "1px solid rgba(255,255,255,0.4)",
+                  color: "white",
+                  cursor: "pointer",
+                  padding: "6px 10px",
+                  borderRadius: 6,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+                title="Save"
+              >
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <polyline points="20 6 9 17 4 12"></polyline>
+                </svg>
+              </button>
+              <button
+                onClick={() => setIsRenaming(false)}
+                style={{
+                  background: "rgba(255,255,255,0.2)",
+                  border: "1px solid rgba(255,255,255,0.4)",
+                  color: "white",
+                  cursor: "pointer",
+                  padding: "6px 10px",
+                  borderRadius: 6,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+                title="Cancel"
+              >
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <line x1="18" y1="6" x2="6" y2="18"></line>
+                  <line x1="6" y1="6" x2="18" y2="18"></line>
+                </svg>
+              </button>
+            </div>
+          ) : (
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <h1 style={{ margin: 0 }}>
+                {currentChat ? currentChat.title : "Group Chat"}
+              </h1>
+              {currentChat &&
+                currentChat.owner_username === currentUserUsername && (
+                  <button
+                    onClick={() => {
+                      setRenameTitle(currentChat.title);
+                      setIsRenaming(true);
+                    }}
+                    title="Rename Chat"
+                    style={{
+                      background: "transparent",
+                      border: "none",
+                      color: "rgba(255,255,255,0.6)",
+                      cursor: "pointer",
+                      padding: "4px",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      transition: "color 0.2s",
+                    }}
+                    onMouseOver={(e) =>
+                      (e.currentTarget.style.color = "rgba(255,255,255,1)")
+                    }
+                    onMouseOut={(e) =>
+                      (e.currentTarget.style.color = "rgba(255,255,255,0.6)")
+                    }
+                  >
+                    <svg
+                      width="18"
+                      height="18"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                      <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                    </svg>
+                  </button>
+                )}
+            </div>
+          )}
         </div>
         <div className="upload-section">
           <input
@@ -620,11 +773,21 @@ export default function ChatUI() {
                         <span></span>
                       </div>
                     ) : (
-                      <div
-                        dangerouslySetInnerHTML={{
-                          __html: (msg.content || "").replace(/\n/g, "<br>"),
-                        }}
-                      />
+                      <div className="markdown-content">
+                        <ReactMarkdown
+                          components={{
+                            a: ({ node, ...props }) => (
+                              <a
+                                {...props}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                              />
+                            ),
+                          }}
+                        >
+                          {msg.content || ""}
+                        </ReactMarkdown>
+                      </div>
                     )}
                   </div>
                 </div>

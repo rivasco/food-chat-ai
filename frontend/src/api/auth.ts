@@ -54,6 +54,8 @@ export async function registerRestaurant(body: {
   email: string;
   password: string;
   website?: string;
+  cuisine?: string;
+  location?: string;
 }): Promise<AuthRestaurantResponse> {
   const res = await fetch(`${API_BASE}/api/register_restaurant`, {
     method: "POST",

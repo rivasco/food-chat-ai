@@ -19,3 +19,4 @@ pdfplumber==0.11.7
 pyjwt>=2.9.0
 passlib[bcrypt]>=1.7.4
 email-validator==2.3.0
+duckduckgo-search==6.2.13

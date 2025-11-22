@@ -1,5 +1,4 @@
 .app {
-  height: 90vh;
   display: flex;
   flex-direction: column;
   max-width: 1200px;
@@ -10,7 +9,7 @@
   overflow: hidden;
   margin-top: 40px;
   margin-bottom: 40px;
-  height: calc(90vh - 80px);
+  height: calc(94vh - 80px);
 }
 
 .header {
@@ -931,4 +930,35 @@
   .btn-group {
     grid-template-columns: 1fr;
   }
+}
+
+/* Markdown content styling */
+.markdown-content p {
+  margin: 0 !important;
+  line-height: 1.2 !important;
+  padding: 0 !important;
+}
+
+.markdown-content p + p {
+  margin-top: 4px !important;
+}
+
+.markdown-content ul,
+.markdown-content ol {
+  margin: 4px 0 !important;
+  padding-left: 1.2em !important;
+}
+
+.markdown-content li {
+  margin-bottom: 0 !important;
+  line-height: 1.2 !important;
+}
+
+.markdown-content li > p {
+  margin: 0 !important;
+}
+
+.markdown-content a {
+  color: inherit;
+  text-decoration: underline;
 }

@@ -11,7 +11,8 @@ from backend.data_storage import (
     get_pdf_text, get_text_chunks, get_or_load_vectorstore, clean_text,
     format_history_from_db, generate_rag_response, generate_general_response
 )
-from backend.database import add_pdf, get_all_pdfs, delete_pdf, create_chat, get_all_chats, get_chat_messages, add_message, update_chat_title, delete_chat, get_message_with_sender
+from langchain_community.tools import DuckDuckGoSearchRun
+from backend.database import add_pdf, get_all_pdfs, delete_pdf, create_chat, get_all_chats, get_chat_messages, add_message, update_chat_title, delete_chat, get_message_with_sender, search_registered_restaurants
 from . import database
 from . import auth
 from .auth import hash_password, verify_password, create_access_token, get_email_from_token
@@ -91,6 +92,8 @@ class RestaurantRegisterRequest(BaseModel):
     email: EmailStr
     password: str
     website: str
+    cuisine: str = ""
+    location: str = ""
 
 class BiddingRulesRequest(BaseModel):
     bid_amount: float
@@ -189,7 +192,7 @@ def register_restaurant(body: RestaurantRegisterRequest):
         raise HTTPException(status_code=400, detail="Email already registered")
     
     try:
-        database.create_restaurant(body.name, body.email, hash_password(body.password), body.website)
+        database.create_restaurant(body.name, body.email, hash_password(body.password), body.website, body.cuisine, body.location)
     except database.sqlite3.IntegrityError:
         raise HTTPException(status_code=400, detail="Restaurant with this email already exists")
 
@@ -251,6 +254,18 @@ def invite_users(chat_id: int, body: InviteRequest, user=Depends(get_current_use
             database.add_chat_member(chat_id, target_user["id"])
             added_count += 1
     return {"message": f"Successfully added {added_count} user(s)."}
+
+class UpdateChatRequest(BaseModel):
+    title: str
+
+@app.put("/chats/{chat_id}", response_model=dict)
+def update_chat(chat_id: int, body: UpdateChatRequest, user=Depends(get_current_user)):
+    """Updates a chat title. Only the owner can update it."""
+    owner_id = database.get_chat_owner(chat_id)
+    if not owner_id or owner_id != user["id"]:
+        raise HTTPException(status_code=403, detail="Only the chat owner can update the chat.")
+    database.update_chat_title(chat_id, body.title)
+    return {"id": chat_id, "title": body.title}
 
 @app.delete("/chats/{chat_id}", status_code=204)
 def delete_chat_endpoint(chat_id: int, user: dict = Depends(get_current_user)):
@@ -314,27 +329,128 @@ async def websocket_endpoint(websocket: WebSocket, chat_id: int, user: dict = De
                         # Build a concise summary using LLM without retrieval
                         from langchain_openai import ChatOpenAI
                         from langchain_core.messages import SystemMessage, HumanMessage
+                        import json
 
                         llm = ChatOpenAI(model_name="gpt-4o", temperature=0)
-                        system = SystemMessage(content=(
-                            "You are a precise assistant that infers restaurant preferences from a group chat.\n"
-                            "Analyze the conversation and infer: cuisine(s), location(s), and any constraints (budget, distance, dietary).\n"
-                            "If you can infer a clear target, respond with EXACTLY: \n"
-                            "I will give you restaurant recommendations for <summary>.\n\n"
-                            "If you cannot infer a clear target, respond with EXACTLY: \n"
-                            "I couldn't identify what you're looking for. Please specify cuisine and location.\n\n"
-                            "Do not add any extra text, bullets, explanations, or markdown."
+                        
+                        # Step 1: Identify Intent
+                        print(f"[RECOMMENDATION] Analyzing intent for chat {chat_id}...")
+                        system_intent = SystemMessage(content=(
+                            "You are a helpful assistant. Analyze the conversation to identify the user's desired cuisine and location.\n"
+                            "Return ONLY a JSON object with keys 'cuisine' and 'location'.\n"
+                            "Example: {\"cuisine\": \"Chinese\", \"location\": \"Los Angeles\"}\n"
+                            "If you cannot determine them, return {\"cuisine\": null, \"location\": null}."
                         ))
-                        # Use the last few user/bot messages as context
-                        prompt = HumanMessage(content=(
-                            "From this chat history, infer what the group wants."
-                        ))
-                        resp = await asyncio.to_thread(llm.invoke, [system, *history_msgs[-40:], prompt])
-                        bot_text = (getattr(resp, "content", "") or "").strip()
-                        if not bot_text:
-                            bot_text = (
-                                "I couldn't identify what you're looking for. Please specify cuisine and location."
-                            )
+                        prompt_intent = HumanMessage(content="Analyze this chat history.")
+                        
+                        resp_intent = await asyncio.to_thread(llm.invoke, [system_intent, *history_msgs[-40:], prompt_intent])
+                        content_intent = (getattr(resp_intent, "content", "") or "").strip()
+                        print(f"[RECOMMENDATION] Intent raw response: {content_intent}")
+                        
+                        # Clean up potential markdown code blocks
+                        if content_intent.startswith("```json"):
+                            content_intent = content_intent[7:-3]
+                        elif content_intent.startswith("```"):
+                            content_intent = content_intent[3:-3]
+                            
+                        try:
+                            intent_data = json.loads(content_intent)
+                        except:
+                            print(f"[RECOMMENDATION] Failed to parse intent JSON")
+                            intent_data = {"cuisine": None, "location": None}
+                            
+                        cuisine = intent_data.get("cuisine")
+                        location = intent_data.get("location")
+                        print(f"[RECOMMENDATION] Extracted: Cuisine='{cuisine}', Location='{location}'")
+
+                        if not cuisine or not location:
+                            bot_text = "I couldn't identify what you're looking for. Please specify cuisine and location."
+                        else:
+                            # Step 2: Search Registered Restaurants
+                            print(f"[RECOMMENDATION] Searching registered restaurants...")
+                            registered = await asyncio.to_thread(database.search_registered_restaurants, cuisine, location)
+                            print(f"[RECOMMENDATION] Found {len(registered)} registered restaurants")
+                            
+                            recommendations = []
+                            # Add registered restaurants (already sorted by bid)
+                            for r in registered:
+                                recommendations.append({
+                                    "name": r["name"],
+                                    "website": r["website"],
+                                    "source": "sponsored"
+                                })
+                            
+                            # Step 3: Fill gaps with Web Search
+                            if len(recommendations) < 5:
+                                needed = 5 - len(recommendations)
+                                print(f"[RECOMMENDATION] Need {needed} more from web search...")
+                                search = DuckDuckGoSearchRun()
+                                # Improved query: prioritize official sites but allow aggregators for discovery
+                                query = f"official website {cuisine} restaurant {location}"
+                                print(f"[RECOMMENDATION] Running web search: '{query}'")
+                                search_results = await asyncio.to_thread(search.run, query)
+                                print(f"[RECOMMENDATION] Web search raw results length: {len(search_results)}")
+                                
+                                # Use LLM to parse search results
+                                system_parse = SystemMessage(content=(
+                                    f"Extract exactly {needed} distinct real restaurants from the search results text.\n"
+                                    "Return ONLY a JSON array of objects with 'name' and 'website' keys.\n"
+                                    "For 'website', prioritize the official site. If not found, use a Yelp/TripAdvisor/OpenTable link from the results.\n"
+                                    "Ensure the restaurant matches the cuisine '{cuisine}'."
+                                ))
+                                print('search results', search_results)
+                                prompt_parse = HumanMessage(content=f"Search Results Text: {search_results}")
+                                
+                                resp_parse = await asyncio.to_thread(llm.invoke, [system_parse, prompt_parse])
+                                content_parse = (getattr(resp_parse, "content", "") or "").strip()
+                                print(f"[RECOMMENDATION] Parsed web results: {content_parse}")
+                                
+                                if content_parse.startswith("```json"):
+                                    content_parse = content_parse[7:-3]
+                                elif content_parse.startswith("```"):
+                                    content_parse = content_parse[3:-3]
+                                
+                                try:
+                                    external_recs = json.loads(content_parse)
+                                    if isinstance(external_recs, list):
+                                        for r in external_recs:
+                                            if len(recommendations) < 5:
+                                                # Fallback for null website: Google Search link
+                                                website = r.get("website")
+                                                if not website:
+                                                    website = f"https://www.google.com/search?q={r.get('name')} {location} official website"
+                                                
+                                                recommendations.append({
+                                                    "name": r.get("name"),
+                                                    "website": website,
+                                                    "source": "organic"
+                                                })
+                                except Exception as e:
+                                    print(f"[RECOMMENDATION] Error parsing web results: {e}")
+
+                            # Step 4: Format Response
+                            bot_text = f"Here are some {cuisine} recommendations in {location}:\n\n"
+                            
+                            # Split into Sponsored and Organic
+                            sponsored = [r for r in recommendations if r.get("source") == "sponsored"]
+                            organic = [r for r in recommendations if r.get("source") == "organic"]
+                            
+                            if sponsored:
+                                bot_text += "**Top Recommended**\n"
+                                for i, rec in enumerate(sponsored, 1):
+                                    website = rec.get('website', '')
+                                    if not website.startswith(('http://', 'https://')):
+                                        website = 'http://' + website
+                                    bot_text += f"{i}. **{rec['name']}**\n   [{rec['website']}]({website})\n"
+                                bot_text += "\n"
+                                
+                            if organic:
+                                bot_text += "**Other Recommended**\n"
+                                for i, rec in enumerate(organic, 1):
+                                    website = rec.get('website', '')
+                                    if not website.startswith(('http://', 'https://')):
+                                        website = 'http://' + website
+                                    bot_text += f"{i}. **{rec['name']}**\n   [{rec['website']}]({website})\n"
 
                         # Save bot message and broadcast
                         bot_id = await asyncio.to_thread(database.add_message, chat_id, bot_text, "bot", None)
@@ -342,9 +458,10 @@ async def websocket_endpoint(websocket: WebSocket, chat_id: int, user: dict = De
                         await manager.broadcast(json.dumps(bot_msg), chat_id)
                     except Exception as e:
                         # On any failure, send a safe fallback once
+                        print(f"Error in recommendation: {e}")
                         try:
                             fallback = (
-                                "I couldn't identify what you're looking for. Please specify cuisine and location."
+                                "I encountered an error while finding recommendations. Please try again."
                             )
                             bot_id = await asyncio.to_thread(database.add_message, chat_id, fallback, "bot", None)
                             bot_msg = await asyncio.to_thread(database.get_message_with_sender, bot_id)

@@ -118,10 +118,27 @@ def init_db():
                 bid_amount REAL DEFAULT 0,
                 max_budget REAL DEFAULT 0,
                 charged_amount REAL DEFAULT 0,
-                created_at TEXT NOT NULL
+                created_at TEXT NOT NULL,
+                cuisine TEXT,
+                location TEXT
             );
             """
         )
+        
+        # Ensure cuisine and location columns exist
+        cur.execute("PRAGMA table_info(restaurants)")
+        rcols = [r[1] for r in cur.fetchall()]
+        if "cuisine" not in rcols:
+            try:
+                cur.execute("ALTER TABLE restaurants ADD COLUMN cuisine TEXT")
+            except Exception:
+                pass
+        if "location" not in rcols:
+            try:
+                cur.execute("ALTER TABLE restaurants ADD COLUMN location TEXT")
+            except Exception:
+                pass
+
         conn.commit()
 
 def add_pdf(filename, file_size):
@@ -378,12 +395,12 @@ def ensure_user(email: str, password_hash: str = "placeholder"):
         return create_user(email, f"{username}{datetime.now().microsecond}", password_hash)
 
 # --- Restaurant helpers ---
-def create_restaurant(name: str, email: str, password_hash: str, website: str):
+def create_restaurant(name: str, email: str, password_hash: str, website: str, cuisine: str = "", location: str = ""):
     with get_conn() as conn:
         cur = conn.cursor()
         cur.execute(
-            "INSERT INTO restaurants (name, email, password_hash, website, created_at) VALUES (?, ?, ?, ?, ?)",
-            (name, email.lower(), password_hash, website, datetime.utcnow().isoformat()),
+            "INSERT INTO restaurants (name, email, password_hash, website, created_at, cuisine, location) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (name, email.lower(), password_hash, website, datetime.utcnow().isoformat(), cuisine, location),
         )
         conn.commit()
         return cur.lastrowid
@@ -410,3 +427,29 @@ def update_restaurant_bidding_rules(restaurant_id: int, bid_amount: float, max_b
             (bid_amount, max_budget, restaurant_id)
         )
         conn.commit()
+
+def search_registered_restaurants(cuisine: str, location: str):
+    """
+    Search for registered restaurants matching cuisine and location.
+    Orders by bid_amount DESC.
+    """
+    with get_conn() as conn:
+        cur = conn.cursor()
+        # Simple case-insensitive partial match
+        query = """
+            SELECT name, website, bid_amount, cuisine, location
+            FROM restaurants
+            WHERE 1=1
+        """
+        params = []
+        if cuisine:
+            query += " AND cuisine LIKE ?"
+            params.append(f"%{cuisine}%")
+        if location:
+            query += " AND location LIKE ?"
+            params.append(f"%{location}%")
+            
+        query += " ORDER BY bid_amount DESC"
+        
+        cur.execute(query, params)
+        return [dict(row) for row in cur.fetchall()]
