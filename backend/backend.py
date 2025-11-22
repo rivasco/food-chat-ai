@@ -223,6 +223,12 @@ def update_bidding_rules(body: BiddingRulesRequest, restaurant: dict = Depends(g
     database.update_restaurant_bidding_rules(restaurant["id"], body.bid_amount, body.max_budget)
     return {}
 
+@app.delete("/api/restaurant", status_code=204)
+def delete_restaurant_account(restaurant: dict = Depends(get_current_restaurant)):
+    """Deletes the currently authenticated restaurant's account."""
+    database.delete_restaurant(restaurant["id"])
+    return {}
+
 @app.get("/users", response_model=List[dict])
 def get_all_users_endpoint(user=Depends(get_current_user)):
     """Returns a list of all users (id and email)."""
@@ -547,6 +553,12 @@ async def delete_pdf_endpoint(pdf_id: int):
     except Exception as e:
         print(f"Error deleting PDF: {str(e)}")
         raise HTTPException(status_code=500, detail="Error deleting PDF")
+
+@app.delete("/api/restaurant", status_code=204)
+def delete_restaurant_account(restaurant: dict = Depends(get_current_restaurant)):
+    """Deletes the currently authenticated restaurant's account."""
+    database.delete_restaurant(restaurant["id"])
+    return {}
 
 @app.get("/health")
 async def health_check():

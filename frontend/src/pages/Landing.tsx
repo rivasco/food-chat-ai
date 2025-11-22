@@ -21,8 +21,8 @@ export default function Landing() {
       <div className="landing-wrapper">
         <h1 className="landing-title">Mingle AI</h1>
         <p className="landing-subtitle">
-          Chat with your PDFs and collaborate in real-time. Choose your path to
-          get started.
+          Chat with your friends and collaborate in real-time with AI. Choose
+          your path below.
         </p>
         <div className="landing-grid">
           <div

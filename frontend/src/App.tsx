@@ -20,6 +20,7 @@ import {
   getRestaurantName,
   getUserType,
 } from "./api/auth";
+import { fetchWithAuth } from "./api/fetchWithAuth";
 import "./App.css";
 
 function RequireAuth() {
@@ -91,10 +92,37 @@ function ChatPage() {
   );
 }
 
-function RestaurantPage() {
+function RestaurantLayout() {
   const navigate = useNavigate();
   const [menuOpen, setMenuOpen] = React.useState(false);
   const restaurantName = getRestaurantName() || "Restaurant";
+
+  const handleDeleteAccount = async () => {
+    if (
+      !window.confirm(
+        "Are you sure you want to delete your account? This action cannot be undone."
+      )
+    ) {
+      return;
+    }
+
+    try {
+      const res = await fetchWithAuth("/api/restaurant", {
+        method: "DELETE",
+      });
+
+      if (!res.ok) {
+        alert("Failed to delete account.");
+        return;
+      }
+
+      logout();
+      navigate("/");
+    } catch (e) {
+      console.error(e);
+      alert("An error occurred.");
+    }
+  };
 
   return (
     <div>
@@ -121,6 +149,16 @@ function RestaurantPage() {
                 <button
                   className="dropdown-item"
                   onClick={() => {
+                    navigate("/bidding");
+                    setMenuOpen(false);
+                  }}
+                >
+                  Bidding
+                </button>
+                <div className="dropdown-divider"></div>
+                <button
+                  className="dropdown-item"
+                  onClick={() => {
                     logout();
                     setMenuOpen(false);
                     navigate("/");
@@ -128,12 +166,22 @@ function RestaurantPage() {
                 >
                   Logout
                 </button>
+                <button
+                  className="dropdown-item"
+                  style={{ color: "#ef4444" }}
+                  onClick={() => {
+                    setMenuOpen(false);
+                    handleDeleteAccount();
+                  }}
+                >
+                  Delete Account
+                </button>
               </div>
             )}
           </div>
         </div>
       </div>
-      <Bidding />
+      <Outlet />
     </div>
   );
 }
@@ -147,7 +195,9 @@ export default function App() {
           <Route path="/app" element={<ChatPage />} />
         </Route>
         <Route element={<RequireRestaurantAuth />}>
-          <Route path="/bidding" element={<RestaurantPage />} />
+          <Route element={<RestaurantLayout />}>
+            <Route path="/bidding" element={<Bidding />} />
+          </Route>
         </Route>
         <Route path="/login" element={<Login />} />
         <Route

@@ -428,6 +428,13 @@ def update_restaurant_bidding_rules(restaurant_id: int, bid_amount: float, max_b
         )
         conn.commit()
 
+def delete_restaurant(restaurant_id: int):
+    """Delete a restaurant from the database."""
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute("DELETE FROM restaurants WHERE id = ?", (restaurant_id,))
+        conn.commit()
+
 def search_registered_restaurants(cuisine: str, location: str):
     """
     Search for registered restaurants matching cuisine and location.
@@ -448,8 +455,9 @@ def search_registered_restaurants(cuisine: str, location: str):
         if location:
             query += " AND location LIKE ?"
             params.append(f"%{location}%")
-            
+        
         query += " ORDER BY bid_amount DESC"
         
         cur.execute(query, params)
-        return [dict(row) for row in cur.fetchall()]
+        rows = cur.fetchall()
+        return [dict(row) for row in rows]
