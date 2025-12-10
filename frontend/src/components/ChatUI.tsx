@@ -455,6 +455,51 @@ export default function ChatUI() {
     }
   };
 
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsUploading(true);
+    const formData = new FormData();
+    formData.append("file", file);
+
+    try {
+      // Use axios directly for file upload to handle FormData correctly
+      // Note: The backend endpoint is /upload-pdf (no /api prefix based on backend.py)
+      const response = await axios.post(
+        "http://localhost:8000/upload-pdf",
+        formData,
+        {
+          headers: {
+            "Content-Type": "multipart/form-data",
+          },
+        }
+      );
+
+      setNotification(`PDF "${file.name}" uploaded successfully!`);
+      // Refresh the list of PDFs
+      loadPdfs();
+    } catch (error) {
+      console.error("Error uploading PDF:", error);
+      setNotification("Failed to upload PDF.");
+    } finally {
+      setIsUploading(false);
+      // Reset the input value so the same file can be selected again if needed
+      e.target.value = "";
+    }
+  };
+
+  const deletePdf = async (pdfId: number) => {
+    try {
+      await axios.delete(`http://localhost:8000/pdfs/${pdfId}`);
+      setNotification("PDF deleted successfully.");
+      loadPdfs();
+    } catch (error) {
+      console.error("Error deleting PDF:", error);
+      setNotification("Failed to delete PDF.");
+    }
+  };
+
   // Initial loads
   useEffect(() => {
     loadPdfs();
@@ -640,7 +685,7 @@ export default function ChatUI() {
           <input
             type="file"
             accept=".pdf"
-            // onChange={handleFileUpload}
+            onChange={handleFileUpload}
             disabled={isUploading}
             id="file-upload"
             style={{ display: "none" }}
@@ -717,6 +762,13 @@ export default function ChatUI() {
                   uploadedPdfs.map((pdf) => (
                     <div key={pdf.id} className="pdf-item">
                       <span className="pdf-name">📄 {pdf.filename}</span>
+                      <button
+                        className="delete-pdf"
+                        onClick={() => deletePdf(pdf.id)}
+                        title="Delete PDF"
+                      >
+                        ×
+                      </button>
                     </div>
                   ))
                 )}

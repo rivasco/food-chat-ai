@@ -332,6 +332,25 @@ async def websocket_endpoint(websocket: WebSocket, chat_id: int, user: dict = De
                         rows = await asyncio.to_thread(database.get_chat_messages, chat_id)
                         history_msgs = format_history_from_db(rows)
 
+                        # RAG Retrieval
+                        rag_info = ""
+                        if vectorstore:
+                            print(f"[RAG] Querying vectorstore with: {data}")
+                            try:
+                                rag_response = await asyncio.to_thread(
+                                    generate_rag_response,
+                                    vectorstore,
+                                    data,
+                                    history_messages=history_msgs[-6:]
+                                )
+                                if "no relevant information" not in rag_response.lower():
+                                    rag_info = rag_response
+                                    print("[RAG] Relevant info found.")
+                                else:
+                                    print("[RAG] No relevant info found in docs.")
+                            except Exception as e:
+                                print(f"[RAG] Error: {e}")
+
                         # Build a concise summary using LLM without retrieval
                         from langchain_openai import ChatOpenAI
                         from langchain_core.messages import SystemMessage, HumanMessage
@@ -341,12 +360,19 @@ async def websocket_endpoint(websocket: WebSocket, chat_id: int, user: dict = De
                         
                         # Step 1: Identify Intent
                         print(f"[RECOMMENDATION] Analyzing intent for chat {chat_id}...")
-                        system_intent = SystemMessage(content=(
+                        
+                        # Inject RAG info into the system prompt for intent analysis
+                        intent_system_content = (
                             "You are a helpful assistant. Analyze the conversation to identify the user's desired cuisine and location.\n"
                             "Return ONLY a JSON object with keys 'cuisine' and 'location'.\n"
                             "Example: {\"cuisine\": \"Chinese\", \"location\": \"Los Angeles\"}\n"
                             "If you cannot determine them, return {\"cuisine\": null, \"location\": null}."
-                        ))
+                        )
+                        
+                        if rag_info:
+                            intent_system_content += f"\n\nAdditional Context from User Documents:\n{rag_info}\nUse this context to infer preferences if not explicitly stated in the chat."
+
+                        system_intent = SystemMessage(content=intent_system_content)
                         prompt_intent = HumanMessage(content="Analyze this chat history.")
                         
                         resp_intent = await asyncio.to_thread(llm.invoke, [system_intent, *history_msgs[-40:], prompt_intent])
@@ -404,7 +430,6 @@ async def websocket_endpoint(websocket: WebSocket, chat_id: int, user: dict = De
                                     "For 'website', prioritize the official site. If not found, use a Yelp/TripAdvisor/OpenTable link from the results.\n"
                                     "Ensure the restaurant matches the cuisine '{cuisine}'."
                                 ))
-                                print('search results', search_results)
                                 prompt_parse = HumanMessage(content=f"Search Results Text: {search_results}")
                                 
                                 resp_parse = await asyncio.to_thread(llm.invoke, [system_parse, prompt_parse])
