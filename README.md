@@ -1,6 +1,6 @@
-# AI Chatbot with RAG Pipeline
+# Food Chat AI
 
-A full-stack AI chatbot application with Retrieval-Augmented Generation (RAG) capabilities. Upload PDF documents and chat with an AI that can answer questions based on the document content.
+A full-stack, AI-powered group chat app where users create groups, invite others, and chat in real time about food cravings. An AI agent can be invoked from any chat to analyze context, infer intent and preferences, and provide relevant local restaurant recommendations.
 
 ## Features
 
